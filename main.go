@@ -44,6 +44,7 @@ func main() {
     addArg := flag.Bool("a", false, "Add an acc")
     getArg := flag.String("g", "", "Get acc by it's Service")
     delArg := flag.String("d", "", "Del acc by by it's Service")
+    chmkArg := flag.Bool("c", false, "Change masterkey")
     fileArg := flag.String("f", "", "Filename of a gob seckret accounts storage")
 
     flag.Parse()
@@ -58,38 +59,65 @@ func main() {
 
     if *showArg == true {
         showAccounts()
-        return
-    }
-
-    if *addArg == true {
+    } else if *addArg == true {
         addAccount()
-        return
-    }
-
-    if *getArg != "" {
+    } else if *getArg != "" {
         if len(*getArg) < 2 {
             log.Fatal("Enter at least two letters")
         } else {
             showAccount(*getArg)
         }
-        return
-    }
-
-    if *delArg != "" {
+    } else if *delArg != "" {
         if len(*delArg) < 2 {
             log.Fatal("Enter at least two letters")
         } else {
             delAccount(*delArg)
         }
-        return
+    } else if *chmkArg == true {
+        changeMasterkey(&masterKey)
     }
-
-    fmt.Println("Positional params:", flag.Args())
 }
 
 func printEntry(entry Account) {
     fmt.Printf("Service: %q, Login %q, Pass: %q, Note: %q \n", entry.Service, entry.Login, entry.Pass, entry.Note)
 }
+
+func changeMasterkey(pass *string) {
+    fmt.Println("Enter new master key")
+    bytePassOne, err := terminal.ReadPassword(int(syscall.Stdin))
+    if err != nil{
+        log.Fatal(err)
+    }
+    fmt.Println("Repeat new master key")
+    bytePassTwo, err := terminal.ReadPassword(int(syscall.Stdin))
+    if err != nil{
+        log.Fatal(err)
+    }
+
+    pw1 := string(bytePassOne)
+    pw2 := string(bytePassTwo)
+
+    if pw1 != pw2 {
+        log.Fatal("Passwords mismatch")
+    }
+
+    if len(pw1) < 5 {
+        log.Fatal("Password is too short")
+    }
+
+    // Encrypt accounts with old masterkey under special path
+    oldFilePath := filePath
+    filePath = filePath + ".oldmasterkey"
+    writeGob(accounts)
+    fmt.Printf("Accounts copy encrypted with old masterkey under %v.\n", filePath)
+
+    // Encrypt accounts with new masterkey under original path
+    *pass = pw1
+    filePath = oldFilePath
+    writeGob(accounts)
+    fmt.Println("Original file encrypted with new masterkey.")
+}
+
 func setMasterkey(pass *string) {
     fmt.Println("Enter the master key")
     bytePass, err := terminal.ReadPassword(int(syscall.Stdin))
@@ -116,7 +144,6 @@ func getAccounts(*Accounts) {
     if err != nil {
         fmt.Println(err)
     }
-
 }
 
 func showAccount(service string) {
