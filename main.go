@@ -42,7 +42,6 @@ var accounts = new(Accounts)
 func main() {
     showArg := flag.Bool("s", false, "Show all accs")
     addArg := flag.Bool("a", false, "Add an acc")
-    getArg := flag.String("g", "", "Get acc by it's Service")
     delArg := flag.String("d", "", "Del acc by by it's Service")
     chmkArg := flag.Bool("c", false, "Change masterkey")
     fileArg := flag.String("f", "", "Filename of a gob seckret accounts storage")
@@ -58,15 +57,18 @@ func main() {
     setMasterkey(&masterKey)
 
     if *showArg == true {
-        showAccounts()
+        if len(flag.Args()) == 1 {
+            if len(flag.Args()[0]) < 2 {
+                log.Fatal("Enter at least two letters")
+            }
+            showAccount(flag.Args()[0])
+        } else if len(flag.Args()) == 0 {
+            showAccounts()
+        } else {
+            log.Fatal("Only one account lookup is allowed")
+        }
     } else if *addArg == true {
         addAccount()
-    } else if *getArg != "" {
-        if len(*getArg) < 2 {
-            log.Fatal("Enter at least two letters")
-        } else {
-            showAccount(*getArg)
-        }
     } else if *delArg != "" {
         if len(*delArg) < 2 {
             log.Fatal("Enter at least two letters")
@@ -125,8 +127,7 @@ func setMasterkey(pass *string) {
         log.Fatal(err)
     }
     *pass = string(bytePass)
-
-    getAccounts(accounts)
+    readGob(accounts)
 }
 
 func showAccounts() {
@@ -139,13 +140,6 @@ func showAccounts() {
     }
 }
 
-func getAccounts(*Accounts) {
-    err := readGob(accounts)
-    if err != nil {
-        fmt.Println(err)
-    }
-}
-
 func showAccount(service string) {
     for _, v := range *accounts {
         if strings.Contains(v.Service, service) {
@@ -155,11 +149,6 @@ func showAccount(service string) {
 }
 
 func addAccount() {
-    /*
-    TODO:
-        - handle dublicate accounts (unique service field)
-        - check password twice
-    */
     entry := Account{"", "", "", ""}
     fields := reflect.TypeOf(entry)
     values := reflect.ValueOf(&entry)
@@ -170,7 +159,7 @@ func addAccount() {
         field := fields.Field(i)
         value := values.Elem().FieldByName(field.Name)
 
-        fmt.Println("Enter the service", field.Name)
+        fmt.Println("Enter the account", field.Name)
         str, err := reader.ReadString('\n')
         if err != nil{
             fmt.Println(err)
@@ -180,6 +169,14 @@ func addAccount() {
         if field.Name == "Service" {
             if len(val) < 3 {
                 log.Fatal("Service name must exceed three letters")
+            }
+
+            for _, v := range *accounts {
+                if v.Service == val {
+                    fmt.Println("\nDuplicate of this service found:")
+                    printEntry(v)
+                    log.Fatal("Duplicates are not allowed")
+                }
             }
         }
 
@@ -192,11 +189,7 @@ func addAccount() {
     }
     accs = append(accs, entry)
 
-    err := writeGob(accs)
-    if err != nil {
-       fmt.Println(err)
-    }
-
+    writeGob(accs)
     fmt.Println("Account added:")
     printEntry(entry)
 }
@@ -227,17 +220,13 @@ func delAccount(service string) {
 
     if len(newAccounts) != len(*accounts) {
         fmt.Println("Save new accs to disk")
-
-        err := writeGob(newAccounts)
-        if err != nil {
-            fmt.Println(err)
-        }
+        writeGob(newAccounts)
     } else {
         fmt.Println("No changes")
     }
 }
 
-func writeGob(object interface{}) error {
+func writeGob(object interface{}) {
     var data bytes.Buffer
     enc := gob.NewEncoder(&data)
     err := enc.Encode(object)
@@ -247,8 +236,6 @@ func writeGob(object interface{}) error {
         fmt.Println("Unable to encrypt")
         log.Fatal(err)
     }
-
-    return err
 }
 
 func createFile() {
@@ -259,7 +246,7 @@ func createFile() {
     emptyFile.Close()
 }
 
-func readGob(object interface{}) error {
+func readGob(object interface{}) {
     if _, err := os.Stat(filePath); os.IsNotExist(err) {
         log.Println("File not found, will create it.")
         createFile()
@@ -279,8 +266,6 @@ func readGob(object interface{}) error {
             log.Fatal(err)
         }
     }
-
-    return err
 }
 
 
