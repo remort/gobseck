@@ -40,11 +40,11 @@ var masterKey = ""
 var accounts = new(Accounts)
 
 func main() {
-    showArg := flag.Bool("s", false, "Show all accs")
-    addArg := flag.Bool("a", false, "Add an acc")
-    delArg := flag.String("d", "", "Del acc by by it's Service")
-    chmkArg := flag.Bool("c", false, "Change masterkey")
-    fileArg := flag.String("f", "", "Filename of a gob seckret accounts storage")
+    showArg := flag.Bool("s", false, "Show all accounts or search for specific account by its Service name, passed as a string.")
+    addArg := flag.Bool("a", false, "Add an acc. If four string arguments passed, account will be created non-interactvely.")
+    delArg := flag.String("d", "", "Delete account by by it's Service name.")
+    chmkArg := flag.Bool("c", false, "Change masterkey.")
+    fileArg := flag.String("f", "", "Filename of a gob secret accounts storage.")
 
     flag.Parse()
 
@@ -68,7 +68,11 @@ func main() {
             log.Fatal("Only one account lookup is allowed")
         }
     } else if *addArg == true {
-        addAccount()
+        if len(flag.Args()) == 0 {
+            addAccount()
+        } else {
+            addAccountOneShot(flag.Args())
+        }
     } else if *delArg != "" {
         if len(*delArg) < 2 {
             log.Fatal("Enter at least two letters")
@@ -148,6 +152,52 @@ func showAccount(service string) {
     }
 }
 
+func validateServiceName(serviceName string) {
+    if len(serviceName) < 3 {
+        log.Fatal("Service name must exceed three letters")
+    }
+    serviceInAccounts(serviceName)
+}
+
+func serviceInAccounts(serviceName string) {
+    for _, v := range *accounts {
+        if v.Service == serviceName {
+            fmt.Println("\nDuplicate of this service found:")
+            printEntry(v)
+            log.Fatal("Duplicates are not allowed")
+        }
+    }
+}
+
+func addAccountOneShot(fields []string ) {
+    entry := Account{}
+    e := reflect.TypeOf(entry)
+    if len(fields) != e.NumField() {
+        log.Fatal("Wrong parameters")
+    }
+
+    if len(fields[0]) < 3 {
+        log.Fatal("Service name must exceed three letters")
+    }
+
+    validateServiceName(fields[0])
+
+    entry.Service = fields[0]
+    entry.Login = fields[1]
+    entry.Pass = fields[2]
+    entry.Note = fields[3]
+
+    accs := Accounts{}
+    for _, v := range *accounts {
+        accs = append(accs, v)
+    }
+    accs = append(accs, entry)
+
+    writeGob(accs)
+    fmt.Println("Account added:")
+    fmt.Println("Fields:", entry)
+}
+
 func addAccount() {
     entry := Account{"", "", "", ""}
     fields := reflect.TypeOf(entry)
@@ -167,17 +217,7 @@ func addAccount() {
 
         val := strings.TrimSpace(str)
         if field.Name == "Service" {
-            if len(val) < 3 {
-                log.Fatal("Service name must exceed three letters")
-            }
-
-            for _, v := range *accounts {
-                if v.Service == val {
-                    fmt.Println("\nDuplicate of this service found:")
-                    printEntry(v)
-                    log.Fatal("Duplicates are not allowed")
-                }
-            }
+            validateServiceName(val)
         }
 
         value.SetString(val)
