@@ -15,10 +15,12 @@ import (
     "fmt"
     "reflect"
     "os"
+    "path"
     "flag"
     "encoding/gob"
     "syscall"
     "golang.org/x/crypto/ssh/terminal"
+    "encoding/csv"
 )
 
 /*
@@ -43,13 +45,14 @@ func main() {
     showArg := flag.Bool("s", false, "Show all accounts or search for specific account by its Service name, passed as a string.")
     addArg := flag.Bool("a", false, "Add an acc. If four string arguments passed, account will be created non-interactvely.")
     delArg := flag.String("d", "", "Delete account by by it's Service name.")
+    importArg := flag.String("i", "", "CSV file to mass import accounts from.")
     chmkArg := flag.Bool("c", false, "Change masterkey.")
     fileArg := flag.String("f", "", "Filename of a gob secret accounts storage.")
 
     flag.Parse()
 
     if *fileArg == "" {
-        log.Fatal("Enter full path to a gob seckret file")
+        filePath = path.Join(path.Dir(os.Args[0]), "gob.seck")
     } else {
         filePath = *fileArg
     }
@@ -81,11 +84,13 @@ func main() {
         }
     } else if *chmkArg == true {
         changeMasterkey(&masterKey)
+    } else if *importArg != "" {
+        importCSV(*importArg)
     }
 }
 
 func printEntry(entry Account) {
-    fmt.Printf("Service: %q, Login %q, Pass: %q, Note: %q \n", entry.Service, entry.Login, entry.Pass, entry.Note)
+    fmt.Printf("Service: %q, Login %q, Pass: %q, Note: %q \n\n", entry.Service, entry.Login, entry.Pass, entry.Note)
 }
 
 func changeMasterkey(pass *string) {
@@ -125,13 +130,28 @@ func changeMasterkey(pass *string) {
 }
 
 func setMasterkey(pass *string) {
-    fmt.Println("Enter the master key")
-    bytePass, err := terminal.ReadPassword(int(syscall.Stdin))
+    var fd int
+    // Determine if stdin is bound to terminal, otherwise read password from tty device.
+    // Need this in case of pipelining data to program via stdin and still have ability to read password.
+    if terminal.IsTerminal(syscall.Stdin) {
+        fd = int(syscall.Stdin)
+    } else {
+        tty, err := os.Open("/dev/tty")
+        if err != nil {
+            log.Fatal("error allocating terminal")
+        }
+        defer tty.Close()
+        fd = int(tty.Fd())
+    }
+
+    fmt.Println("Enter the master key:")
+    bytePass, err := terminal.ReadPassword(fd)
     if err != nil{
         log.Fatal(err)
     }
     *pass = string(bytePass)
     readGob(accounts)
+    fmt.Println("Master key is correct.\n")
 }
 
 func showAccounts() {
@@ -152,50 +172,50 @@ func showAccount(service string) {
     }
 }
 
-func validateServiceName(serviceName string) {
+func validateAccount(serviceName string, serviceLogin string) {
     if len(serviceName) < 3 {
         log.Fatal("Service name must exceed three letters")
     }
-    serviceInAccounts(serviceName)
-}
-
-func serviceInAccounts(serviceName string) {
     for _, v := range *accounts {
-        if v.Service == serviceName {
-            fmt.Println("\nDuplicate of this service found:")
+        if v.Service == serviceName && v.Login == serviceLogin {
+            fmt.Println("Duplicate of this service found:")
             printEntry(v)
             log.Fatal("Duplicates are not allowed")
         }
     }
 }
 
-func addAccountOneShot(fields []string ) {
+func appendAccount(entry Account) {
+    accs := Accounts{}
+    for _, v := range *accounts {
+        accs = append(accs, v)
+    }
+    accs = append(accs, entry)
+    accounts = &accs
+}
+
+func addAccountEntry(entry Account) {
+    appendAccount(entry)
+    writeGob(accounts)
+    fmt.Println("Account added:")
+    printEntry(entry)
+}
+
+func addAccountOneShot(fields []string) {
     entry := Account{}
     e := reflect.TypeOf(entry)
     if len(fields) != e.NumField() {
         log.Fatal("Wrong parameters")
     }
 
-    if len(fields[0]) < 3 {
-        log.Fatal("Service name must exceed three letters")
-    }
-
-    validateServiceName(fields[0])
+    validateAccount(fields[0], fields[1])
 
     entry.Service = fields[0]
     entry.Login = fields[1]
     entry.Pass = fields[2]
     entry.Note = fields[3]
 
-    accs := Accounts{}
-    for _, v := range *accounts {
-        accs = append(accs, v)
-    }
-    accs = append(accs, entry)
-
-    writeGob(accs)
-    fmt.Println("Account added:")
-    fmt.Println("Fields:", entry)
+    addAccountEntry(entry)
 }
 
 func addAccount() {
@@ -216,22 +236,53 @@ func addAccount() {
         }
 
         val := strings.TrimSpace(str)
-        if field.Name == "Service" {
-            validateServiceName(val)
-        }
-
         value.SetString(val)
     }
+    validateAccount(entry.Service, entry.Login)
+    addAccountEntry(entry)
+}
 
-    accs := Accounts{}
-    for _, v := range *accounts {
-        accs = append(accs, v)
+func importCSV(filename string) {
+    file, err := os.Open(filename)
+    if err != nil {
+        log.Fatal(err)
     }
-    accs = append(accs, entry)
+    defer file.Close()
 
-    writeGob(accs)
-    fmt.Println("Account added:")
-    printEntry(entry)
+    s := bufio.NewScanner(file)
+    for s.Scan() {
+        fmt.Println("Importing line:", s.Text())
+
+        r := csv.NewReader(strings.NewReader(s.Text()))
+        r.Comma = ';'
+        r.ReuseRecord = true
+        record, err := r.Read()
+        if err == io.EOF {
+            break
+        }
+        if err != nil {
+            log.Fatal(err)
+        }
+
+        entry := Account{}
+        e := reflect.TypeOf(entry)
+        if len(record) < e.NumField() -1 {
+            log.Fatal("Wrong number rof fields in string:", s.Text())
+        }
+
+        validateAccount(record[0], record[1])
+
+        entry.Service = record[0]
+        entry.Login = record[1]
+        entry.Pass = record[2]
+        if len(record) == e.NumField() {
+            entry.Note = record[3]
+        }
+
+        appendAccount(entry)
+        writeGob(accounts)
+    }
+    fmt.Println("Import is finished.")
 }
 
 func delAccount(service string) {
@@ -240,7 +291,7 @@ func delAccount(service string) {
 
     for _, v := range *accounts {
         if v.Service == service {
-            fmt.Printf("Found account for service: %v with Login: %v. Delete this acc ?\n", v.Service, v.Login)
+            fmt.Printf("Found account for service: %v with Login: %v. Delete this acc ? (y/n)\n", v.Service, v.Login)
             str, err := reader.ReadString('\n')
             if err != nil{
                 fmt.Println(err)
@@ -258,7 +309,7 @@ func delAccount(service string) {
         newAccounts = append(newAccounts, v)
     }
 
-    if len(newAccounts) != len(*accounts) {
+    if len(newAccounts) < len(*accounts) {
         fmt.Println("Save new accs to disk")
         writeGob(newAccounts)
     } else {
